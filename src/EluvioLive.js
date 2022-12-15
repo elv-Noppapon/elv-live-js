@@ -95,6 +95,14 @@ class EluvioLive {
 
     let m = await this.List({ tenantId });
 
+    let tenantConfig = await this.TenantGetMinterConfig({tenant: tenantId});
+    if (tenantConfig.config.minter == "") {
+      console.log("No tenant configuration");
+    } else {
+      cauth = tenantConfig.config.minter;
+      mintHelper = tenantConfig.config.minter_helper;
+    }
+
     tenantInfo.marketplaces = {};
     var warns = [];
 
@@ -181,8 +189,8 @@ class EluvioLive {
               );
             }
           }
-          tenantInfo.marketplaces[key].items[sku].nftCap = nftInfo.cap;
           tenantInfo.marketplaces[key].items[sku].nftMinted = nftInfo.minted;
+          tenantInfo.marketplaces[key].items[sku].nftCap = nftInfo.cap;
           tenantInfo.marketplaces[key].items[sku].nftTotalSupply =
             nftInfo.totalSupply;
           tenantInfo.marketplaces[key].items[sku].nftName = nftInfo.name;
@@ -235,7 +243,6 @@ class EluvioLive {
     tenantInfo.sites = {};
     tenantInfo.warns = warns;
 
-  
     return tenantInfo;
   }
 
@@ -1071,7 +1078,6 @@ class EluvioLive {
 
     nftInfo.transferFee = await this.NftGetTransferFee({address: addr});
 
-
     try {
       const minted = await this.client.CallContractMethod({
         contractAddress: addr,
@@ -1114,6 +1120,7 @@ class EluvioLive {
         formatArguments: true,
       });
       if (!isMinter) {
+        console.log("NFT", addr, "minthelper", mintHelper, "isMinter", isMinter);
         warns.push("Mint helper not set up addr: " + addr);
       }
 
@@ -1128,6 +1135,7 @@ class EluvioLive {
         minterAddr &&
         nftInfo.mintHelperInfo.owner.toLowerCase() != minterAddr.toLowerCase()
       ) {
+        console.log("MINT HELPER", minterAddr, nftInfo.mintHelperInfo);
         warns.push("Bad mint helper owner " + addr);
       }
     }
@@ -1324,7 +1332,6 @@ class EluvioLive {
 
     return res;
   }
-  
 
   /**
    * Sets the nft policy and permissions for a given object
@@ -2538,7 +2545,6 @@ class EluvioLive {
     });
     return res;
   }
-  
 
   /**
    * Get minter configuration from authority service
@@ -2616,15 +2622,43 @@ class EluvioLive {
    *
    * @namedParams
    * @param {string} tenant - The Tenant ID
+   * @param {number} funds - Optinal amount to fund the new keys
    * @return {Promise<Object>} - The API Response for the request
    */
-  async TenantReplaceMinterConfig({ tenant, host, proxyOwner, minter, purge=false}) {
+  async TenantReplaceMinterConfig({ tenant, host, proxyOwner, minter, purge=false, funds=0}) {
     let res = await this.PutServiceRequest({
       path: urljoin("/tnt/config", tenant, "minter"),
       host,
       queryParams: {proxyowner:proxyOwner,minter,purge}
     });
-    return res.json();
+
+    let tenantConfigResult = await res.json();
+
+    if (funds > 0){
+      console.log ("Funding minter and proxy addresses.");
+      let minterAddress = tenantConfigResult.config.minter_address;
+
+      let account = new ElvAccount({configUrl:this.configUrl, debugLogging: this.debug});
+      account.InitWithClient({elvClient: this.client});
+
+      await account.Send({
+        address: minterAddress,
+        funds
+      });
+
+      console.log("Funds Sent to minter address: ", minterAddress);
+
+      let proxyAddress = tenantConfigResult.config.proxy_owner_address;
+
+      await account.Send({
+        address: proxyAddress,
+        funds
+      });
+
+      console.log("Funds Sent to proxy address: ", proxyAddress);
+    }
+
+    return tenantConfigResult;
   }
 
   /**
@@ -2641,6 +2675,62 @@ class EluvioLive {
       queryParams: {force}
     });
     return res;
+  }
+
+  /**
+   * Migrate tenant to new minter config system
+   *
+   * @namedParams
+   * @param {string} tenant - The Tenant ID
+   * @return {Promise<Object>} - The API Response for the request
+   */
+  async TenantMigrate({ tenant, minter }) {
+
+    console.log("Check if the tenant needs migration");
+    let tenantConfig = await this.TenantGetMinterConfig({tenant});
+    console.log("CONFIG", tenantConfig);
+
+    if (tenantConfig.config.minter == minter) {
+      console.log("Tenant minter matches - skipping minter config.");
+    } else if (tenantConfig.config.minter != "") {
+      console.log("Tenant config already in place but different minter - stopping here. Delete first.");
+      return;
+    } else {
+
+      console.log("Create new minter and proxy owner");
+      let res = await this.TenantCreateMinterConfig({tenant});
+      console.log(res);
+
+      console.log("Replace with original minter", minter);
+      res = await this.TenantReplaceMinterConfig({
+        tenant,
+        minter,
+        funds: 0.1
+      });
+      console.log(res);
+
+      console.log("Create helper and proxy contracts");
+      res = await this.TenantDeployHelperContracts({tenant});
+      tenantConfig = await res.json();
+      console.log("NEW CONFIG", tenantConfig);
+    }
+
+    const mintHelper = tenantConfig.config.minter_helper;
+    const proxy = tenantConfig.config.transfer_proxy_address;
+
+    let tenantNftList = await this.TenantNftList({ tenantId: tenant });
+    for (const i in tenantNftList) {
+      const nftAddr = tenantNftList[i];
+      console.log(nftAddr);
+      console.log("Setting minter", nftAddr, mintHelper);
+      let r1 = await this.NftAddMinter({addr: nftAddr, minterAddr: mintHelper});
+      console.log("r1", r1);
+      console.log("Setting proxy", nftAddr, proxy);
+      let r2 = await this.NftSetTransferProxy({addr: nftAddr, proxy});
+      console.log("r2", r2);
+    };
+
+    return tenantConfig;
   }
 
   FilterTenant({ object }) {

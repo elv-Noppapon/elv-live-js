@@ -1174,6 +1174,23 @@ const CmdTenantDeployHelpers = async ({ argv }) => {
   }
 };
 
+const CmdTenantMigrate = async ({ argv }) => {
+  console.log("Tenant migrate");
+
+  try {
+    await Init({ debugLogging: argv.verbose });
+
+    res = await elvlv.TenantMigrate({
+      tenant: argv.tenant,
+      minter: argv.minter
+    });
+
+    console.log("\n" + res);
+  } catch (e) {
+    console.error("ERROR:", e);
+  }
+};
+
 yargs(hideBin(process.argv))
   .option("verbose", {
     describe: "Verbose mode",
@@ -2353,6 +2370,25 @@ yargs(hideBin(process.argv))
     },
     (argv) => {
       CmdTenantDeleteMinter({ argv });
+    }
+  )
+
+  .command(
+    "tenant_migrate <tenant>",
+    "Migrate tenant NFTs to using new minter config system",
+    (yargs) => {
+      yargs
+        .positional("tenant", {
+          describe: "Tenant ID",
+          type: "string",
+        })
+        .option("minter", {
+          describe: "Minter (ikms)",
+          type: "string",
+        });
+    },
+    (argv) => {
+      CmdTenantMigrate({ argv });
     }
   )
 
