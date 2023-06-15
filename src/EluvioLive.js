@@ -78,7 +78,7 @@ class EluvioLive {
       contractAddress: tenantAddr,
       abi: JSON.parse(abi),
       methodName: "groupsMapping",
-      methodArgs: ["tenant_admin", 0], 
+      methodArgs: ["tenant_admin", 0],
       formatArguments: true,
     });
 
@@ -386,7 +386,6 @@ class EluvioLive {
 
         contentAdminAddresses.push(addr);
       } catch (e) {
-        console.log(e);
         if (contentAdminAddresses.length == 0) {
           contentAdminAddresses = null;
         }
